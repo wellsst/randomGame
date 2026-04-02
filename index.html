@@ -55,8 +55,8 @@
     <button id="musicToggle">Music: ON</button>
     <canvas id="gameCanvas"></canvas>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js" integrity="sha384-c6Uo4N9c3SOEigMVzP6IshUG1wQ5uMp3xeoQFiHWAQ86joWdgyajkvopySyKy/Z6" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.min.js" integrity="sha384-j3WI9l+P8MsRWsPtJ+4IwVtat47xahvMjZJ9VpFDIHUHPbJplP5Qm8/i4qwYxHG2" crossorigin="anonymous"></script>
     <script>
 // ============================================================
 //  CLOUD BUNNY: DREAMLAND v3
@@ -69,7 +69,7 @@ function resize() {
     canvas.height = window.innerHeight;
 }
 resize();
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => { resize(); if (gameRunning) initIslands(); });
 const W = () => canvas.width;
 const H = () => canvas.height;
 
@@ -173,7 +173,7 @@ let currentMusicMode = 'normal';
 
 // Minigame state
 let frogger = { x: 0, y: 0, lane: 0, hopTimer: 0, facing: 0, alive: true, score: 0 };
-let frogLanes = [], frogTimer = 0;
+let frogLanes = [], frogTimer = 0, frogTransition = 0;
 let penguinGame = { x: 0, y: 0, vx: 0, vy: 0, fish: [], icebergs: [], score: 0, timer: 0 };
 let owlGame = { x: 0, y: 0, vy: 0, trees: [], fireflies: [], score: 0, timer: 0, flap: 0 };
 let groundHazards = [];
@@ -443,7 +443,7 @@ function updatePower(dt) {
         for (const c of collectibles) {
             const dx = bunny.x - c.x, dy = bunny.y - c.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist < 250) { c.x += dx * 0.05; c.y += dy * 0.05; }
+            if (dist < 250) { const pull = 0.05 * timeScale; c.x += dx * pull; c.y += dy * pull; }
         }
     }
 
@@ -570,6 +570,9 @@ function updateWormhole(dt) {
     } else if (whPhase === 'frogger') { updateFrogger(dt); }
     else if (whPhase === 'penguin') { updatePenguin(dt); }
     else if (whPhase === 'owl') { updateOwl(dt); }
+
+    // Check energy during minigames - end wormhole if depleted
+    if (energy <= 0) { energy = 0; endWormhole(); gameOver = true; saveGame(); }
 }
 
 function endWormhole() {
@@ -821,8 +824,24 @@ function drawWormhole() {
     ctx.fillText('Wormhole - Arrows to fly!', W()/2, 35);
     ctx.font = '15px "Segoe UI"'; ctx.fillStyle = '#ffe080';
     ctx.fillText(`+${whScore} pts | ${Math.ceil(10-whTimer)}s to minigame`, W()/2, 58);
-    ctx.shadowBlur = 0; ctx.textAlign = 'left';
+    ctx.shadowBlur = 0;
+    // Energy bar during wormhole
+    drawMinigameEnergyBar();
+    ctx.textAlign = 'left';
     ctx.restore();
+}
+
+function drawMinigameEnergyBar() {
+    const bw = 100, bh = 8, bx = W() - bw - 15, by = 15;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.roundRect(bx-2,by-2,bw+4,bh+4,6); ctx.fill();
+    const fill = Math.max(0, energy / maxEnergy);
+    if (fill > 0) {
+        ctx.fillStyle = fill > 0.5 ? '#60dd60' : fill > 0.25 ? '#ddcc40' : '#dd4040';
+        ctx.beginPath(); ctx.roundRect(bx,by,bw*fill,bh,4); ctx.fill();
+    }
+    ctx.font = '9px "Segoe UI"'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+    ctx.fillText(`Energy ${Math.ceil(energy)}`, bx+bw/2, by+bh+11);
+    if (energy < 20) { ctx.globalAlpha = 0.08 + Math.sin(gameTime*6)*0.05; ctx.fillStyle='#ff0000'; ctx.fillRect(0,0,W(),H()); ctx.globalAlpha=1; }
 }
 
 function drawFrogger() {
@@ -857,7 +876,7 @@ function drawFrogger() {
     ctx.fillText('Frogger! Cross to safety!',W()/2,28);
     ctx.font='14px "Segoe UI"'; ctx.fillStyle='#ffe080';
     ctx.fillText(`+${whScore} pts | ${Math.ceil(20-frogTimer)}s`,W()/2,48);
-    ctx.shadowBlur=0; ctx.textAlign='left'; ctx.restore();
+    ctx.shadowBlur=0; drawMinigameEnergyBar(); ctx.textAlign='left'; ctx.restore();
 }
 
 function drawPenguin() {
@@ -867,13 +886,16 @@ function drawPenguin() {
     const ig = ctx.createLinearGradient(0,0,0,H());
     ig.addColorStop(0,'#b0d8f0'); ig.addColorStop(1,'#e0f0ff');
     ctx.fillStyle=ig; ctx.fillRect(0,0,W(),H());
-    // Ice texture
-    ctx.globalAlpha=0.1;
-    for (let x=0;x<W();x+=40) for (let y=0;y<H();y+=40) {
-        ctx.strokeStyle='#fff'; ctx.lineWidth=0.5;
-        ctx.beginPath(); ctx.moveTo(x+Math.random()*20,y); ctx.lineTo(x+20+Math.random()*20,y+20); ctx.stroke();
+    // Ice texture (pre-baked)
+    if (!penguinGame._iceTex || penguinGame._iceTex.width !== W()) {
+        const oc = document.createElement('canvas'); oc.width = W(); oc.height = H();
+        const ox = oc.getContext('2d'); ox.strokeStyle='#fff'; ox.lineWidth=0.5; ox.globalAlpha=0.1;
+        for (let x=0;x<W();x+=40) for (let y=0;y<H();y+=40) {
+            ox.beginPath(); ox.moveTo(x+Math.random()*20,y); ox.lineTo(x+20+Math.random()*20,y+20); ox.stroke();
+        }
+        penguinGame._iceTex = oc;
     }
-    ctx.globalAlpha=1;
+    ctx.drawImage(penguinGame._iceTex, 0, 0);
     // Icebergs
     for (const ib of pg.icebergs) {
         ctx.fillStyle='#d0e8f8'; ctx.beginPath(); ctx.roundRect(ib.x-ib.w/2,ib.y-ib.h/2,ib.w,ib.h,8); ctx.fill();
@@ -905,7 +927,7 @@ function drawPenguin() {
     ctx.fillText('Penguin Slide! Collect the fish!',W()/2,28);
     ctx.font='14px "Segoe UI"'; ctx.fillStyle='#4080c0';
     ctx.fillText(`+${whScore} pts | ${Math.ceil(18-pg.timer)}s | Fish: ${pg.fish.filter(f=>f.collected).length}/${pg.fish.length}`,W()/2,48);
-    ctx.textAlign='left'; ctx.restore();
+    drawMinigameEnergyBar(); ctx.textAlign='left'; ctx.restore();
 }
 
 function drawOwl() {
@@ -959,11 +981,12 @@ function drawOwl() {
     ctx.fillText('Night Owl! Fly through the forest!',W()/2,28);
     ctx.font='14px "Segoe UI"'; ctx.fillStyle='#c0a060';
     ctx.fillText(`+${whScore} pts | ${Math.ceil(18-og.timer)}s | Space to flap!`,W()/2,48);
-    ctx.textAlign='left'; ctx.restore();
+    drawMinigameEnergyBar(); ctx.textAlign='left'; ctx.restore();
 }
 
 // ========== ACHIEVEMENTS ==========
 function checkAchievements() {
+    cachedSave = null; // ensure fresh data for save-based achievement checks
     for (const a of ACHIEVEMENTS) {
         if (unlockedAchievements.includes(a.id)) continue;
         if (a.check()) {
@@ -984,7 +1007,7 @@ function loadAchievements() {
 }
 function drawAchievementPopup() {
     if (!achievementPopup || achievementPopupTimer <= 0) return;
-    achievementPopupTimer -= 1/60;
+    // Timer decremented in update() with proper dt
     const alpha = Math.min(1, achievementPopupTimer, (4-achievementPopupTimer)*3);
     ctx.globalAlpha = alpha;
     const pw = 280, ph = 50, px = W()/2-pw/2, py = 90;
@@ -1006,8 +1029,9 @@ function spawnMathPuzzle() {
     if (op === '+') { a = 2+Math.floor(Math.random()*15); b = 2+Math.floor(Math.random()*15); answer = a+b; }
     else if (op === '-') { a = 5+Math.floor(Math.random()*20); b = 1+Math.floor(Math.random()*a); answer = a-b; }
     else { a = 2+Math.floor(Math.random()*10); b = 2+Math.floor(Math.random()*10); answer = a*b; }
-    const wrong1 = answer + Math.floor(Math.random()*5)+1;
-    const wrong2 = Math.max(0, answer - Math.floor(Math.random()*5)-1);
+    let wrong1, wrong2;
+    do { wrong1 = answer + Math.floor(Math.random()*5)+1; } while (wrong1 === answer);
+    do { wrong2 = Math.max(0, answer - Math.floor(Math.random()*5)-1); } while (wrong2 === answer || wrong2 === wrong1);
     const options = [answer, wrong1, wrong2].sort(()=>Math.random()-0.5);
     mathPuzzle = {
         x: W()+50, y: H()*0.2+Math.random()*H()*0.4, speed: 0.4,
@@ -1281,15 +1305,19 @@ function drawBunny() {
     ctx.beginPath(); ctx.ellipse(0, b.h / 2 + 2, b.w * 0.45, 3, 0, 0, Math.PI * 2); ctx.fill();
 
     const dm = dreamMode;
-    const bG = ctx.createRadialGradient(0, 2, 0, 0, 2, b.w * 0.5);
-    bG.addColorStop(0, dm ? '#f0e0ff' : '#fff5f5'); bG.addColorStop(1, dm ? '#d8b0ff' : '#ffddee');
-    ctx.fillStyle = bG;
+    const cacheKey = dm ? 'dream' : 'normal';
+    if (!bunny._gradCache || bunny._gradCache.key !== cacheKey) {
+        const bG = ctx.createRadialGradient(0, 2, 0, 0, 2, b.w * 0.5);
+        bG.addColorStop(0, dm ? '#f0e0ff' : '#fff5f5'); bG.addColorStop(1, dm ? '#d8b0ff' : '#ffddee');
+        const hG = ctx.createRadialGradient(-2, -14, 0, 0, -10, 20);
+        hG.addColorStop(0, '#fff'); hG.addColorStop(1, dm ? '#ece0ff' : '#ffe8f0');
+        bunny._gradCache = { key: cacheKey, body: bG, head: hG };
+    }
+    ctx.fillStyle = bunny._gradCache.body;
     ctx.beginPath(); ctx.ellipse(0, 4, b.w * 0.44, b.h * 0.41, 0, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = dm ? '#b888dd' : '#e8a0b8'; ctx.lineWidth = 1.5; ctx.stroke();
 
-    const hG = ctx.createRadialGradient(-2, -14, 0, 0, -10, 20);
-    hG.addColorStop(0, '#fff'); hG.addColorStop(1, dm ? '#ece0ff' : '#ffe8f0');
-    ctx.fillStyle = hG;
+    ctx.fillStyle = bunny._gradCache.head;
     ctx.beginPath(); ctx.ellipse(0, -10, 16, 14, 0, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = dm ? '#b888dd' : '#e8a0b8'; ctx.lineWidth = 1; ctx.stroke();
 
@@ -2120,6 +2148,7 @@ function update(dt) {
     if (fireflies.length<15 && Math.random()<0.005) fireflies.push(makeFirefly());
 
     // Math puzzles
+    if (achievementPopupTimer > 0) achievementPopupTimer -= dt;
     mathPuzzleTimer += dt;
     if (mathPuzzleTimer > 15 && (!mathPuzzle || mathPuzzle.solved || mathPuzzle.failed)) { spawnMathPuzzle(); mathPuzzleTimer = 0; }
     if (mathPuzzle && !mathPuzzle.solved && !mathPuzzle.failed) { mathPuzzle.x -= mathPuzzle.speed; if (mathPuzzle.x < -100) mathPuzzle = null; }
@@ -2283,8 +2312,12 @@ function initAudio(){
     if(sfxSynth)return;
     sfxSynth=new Tone.Synth({oscillator:{type:'sine'},envelope:{attack:0.01,decay:0.15,sustain:0,release:0.1},volume:-14}).toDestination();
 }
+let lastSfxTime = 0, sfxCooldown = 50; // ms between sounds
 function playCollectSound(type){
     if(!sfxSynth)return;
+    const now = performance.now();
+    if (now - lastSfxTime < sfxCooldown) return; // debounce rapid sounds
+    lastSfxTime = now;
     try{
         if(type==='star'){sfxSynth.triggerAttackRelease('E5','16n');setTimeout(()=>sfxSynth.triggerAttackRelease('G5','16n'),50);}
         else if(type==='flower'){sfxSynth.triggerAttackRelease('C5','16n');setTimeout(()=>sfxSynth.triggerAttackRelease('E5','16n'),70);}
