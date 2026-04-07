@@ -164,19 +164,41 @@ let activePower = null, powerTimer = 0, powerFlash = 0;
 let timeScale = 1; // for time warp
 
 // ========== WORMHOLE / MINIGAME MODE ==========
-let wormholeMode = false, whTimer = 0, whPhase = 'tunnel'; // 'tunnel' -> 'frogger'
-let whSpeed = 0, whPosition = 0, whTilt = 0, whTargetTilt = 0;
-let whStars = [], whRings = [], whObstacles = [], whScore = 0, whTransition = 0;
-let whShake = 0, whBarrelRoll = 0, whBoost = 0;
+let wormholeMode = false, whTimer = 0, whPhase = 'coaster';
+let whScore = 0, whShake = 0;
 let nextWormholeScore = 500;
 let currentMusicMode = 'normal';
-
+// Rollercoaster state
+let rc = { x: 0, y: 0, trackPos: 0, speed: 3, track: [], stars: [], score: 0 };
 // Minigame state
 let frogger = { x: 0, y: 0, lane: 0, hopTimer: 0, facing: 0, alive: true, score: 0 };
 let frogLanes = [], frogTimer = 0, frogTransition = 0;
 let penguinGame = { x: 0, y: 0, vx: 0, vy: 0, fish: [], icebergs: [], score: 0, timer: 0 };
 let owlGame = { x: 0, y: 0, vy: 0, trees: [], fireflies: [], score: 0, timer: 0, flap: 0 };
 let groundHazards = [];
+
+// ========== ADAPTIVE LEARNING SYSTEM ==========
+// Tracks kid's skill level and adapts math + language challenges
+let learningState = {
+    mathLevel: 1,       // 1=counting, 2=add small, 3=add big, 4=subtract, 5=multiply
+    langLevel: 1,       // 1=letters, 2=3-letter words, 3=4-letter, 4=5-letter, 5=sentences
+    mathCorrect: 0, mathTotal: 0, mathStreak: 0,
+    langCorrect: 0, langTotal: 0, langStreak: 0,
+    recentMath: [],     // last 10 results (true/false) for adaptive window
+    recentLang: [],
+};
+let learningGate = null;  // active challenge blocking progress
+let learningGateTimer = 0;
+let learningReward = false; // true = earned minigame access
+
+// Word banks by difficulty
+const WORD_BANKS = [
+    ['cat','dog','sun','hat','red','big','run','hop','fun','cup'],  // 3-letter
+    ['frog','star','jump','fish','tree','bird','moon','rain','cake','blue'], // 4-letter
+    ['cloud','bunny','happy','sunny','green','music','dance','dream','heart','smile'], // 5-letter
+    ['rabbit','flower','friend','forest','garden','island','orange','purple','yellow','wonder'], // 6-letter
+];
+
 // Achievements
 const ACHIEVEMENTS = [
     { id: 'first_friend', name: 'First Friend', desc: 'Collect your first animal friend', icon: '🐾', check: () => friends.length >= 1 },
@@ -184,18 +206,17 @@ const ACHIEVEMENTS = [
     { id: 'score_500', name: 'Rising Star', desc: 'Reach 500 points', icon: '⭐', check: () => score >= 500 },
     { id: 'score_2000', name: 'Cloud Master', desc: 'Reach 2000 points', icon: '🌟', check: () => score >= 2000 },
     { id: 'combo_10', name: 'Combo King', desc: 'Get a 10x combo', icon: '🔥', check: () => maxCombo >= 10 },
-    { id: 'wormhole_1', name: 'Down the Rabbit Hole', desc: 'Enter the wormhole', icon: '🌀', check: () => (loadSave().wormholesEntered || 0) >= 1 },
+    { id: 'wormhole_1', name: 'Coaster Rider', desc: 'Complete a rollercoaster', icon: '🎢', check: () => (loadSave().wormholesEntered || 0) >= 1 },
     { id: 'frogger_cross', name: 'Frogger Pro', desc: 'Cross to safety in Frogger', icon: '🐸', check: () => (loadSave().froggerCrossings || 0) >= 1 },
     { id: 'friends_5', name: 'Party Time', desc: 'Have 5 friends at once', icon: '🎉', check: () => friends.length >= 5 },
     { id: 'level_4', name: 'Adventurer', desc: 'Reach Level 4', icon: '🗺', check: () => currentLevel >= 3 },
     { id: 'dream_mode', name: 'Dreamer', desc: 'Activate Dream Mode', icon: '💫', check: () => (loadSave().dreamActivations || 0) >= 1 },
-    { id: 'math_5', name: 'Quick Thinker', desc: 'Solve 5 math puzzles', icon: '🧮', check: () => (loadSave().mathSolved || 0) >= 5 },
-    { id: 'penguin_10', name: 'Ice Fisher', desc: 'Collect 10 fish as Penguin', icon: '🐧', check: () => (loadSave().fishCollected || 0) >= 10 },
+    { id: 'math_10', name: 'Math Whiz', desc: 'Solve 10 math challenges', icon: '🧮', check: () => learningState.mathCorrect >= 10 },
+    { id: 'lang_10', name: 'Word Builder', desc: 'Spell 10 words correctly', icon: '📖', check: () => learningState.langCorrect >= 10 },
+    { id: 'streak_5', name: 'On a Roll', desc: 'Get 5 correct answers in a row', icon: '🔥', check: () => learningState.mathStreak >= 5 || learningState.langStreak >= 5 },
 ];
 let unlockedAchievements = [];
 let achievementPopup = null, achievementPopupTimer = 0;
-// Math puzzle collectibles
-let mathPuzzle = null, mathPuzzleTimer = 0;
 
 // ========== SAVE SYSTEM ==========
 let cachedSave = null;
@@ -289,14 +310,15 @@ function initGame(continued) {
     mergeFlash = 0;
     windOffset = 0; windSpeed = 0;
     activePower = null; powerTimer = 0; powerFlash = 0; timeScale = 1;
-    wormholeMode = false; whTimer = 0; whPhase = 'tunnel'; whSpeed = 0;
-    whPosition = 0; whTilt = 0; whTargetTilt = 0;
-    whStars = []; whRings = []; whObstacles = []; whScore = 0; whTransition = 0;
-    whShake = 0; whBarrelRoll = 0; whBoost = 0;
+    wormholeMode = false; whTimer = 0; whPhase = 'coaster'; whScore = 0; whShake = 0;
+    rc = { x: 0, y: 0, trackPos: 0, speed: 3, track: [], stars: [], score: 0 };
     nextWormholeScore = 500; currentMusicMode = 'normal';
     frogger = { x: 0, y: 0, lane: 4, hopTimer: 0, facing: 0, alive: true, score: 0 };
     frogLanes = []; frogTimer = 0; frogTransition = 0;
-    groundHazards = [];
+    groundHazards = []; learningGate = null; learningGateTimer = 0; learningReward = false;
+    // Restore learning state from save
+    const ls = loadSave(); cachedSave = null;
+    if (ls.learningState) Object.assign(learningState, ls.learningState);
 
     if (continued) {
         const s = loadSave();
@@ -480,7 +502,272 @@ function drawPowerHUD() {
     }
 }
 
-// ========== WORMHOLE - smooth 3rd person flying game ==========
+// ========== ADAPTIVE LEARNING ENGINE ==========
+function adaptDifficulty(type) {
+    const s = type === 'math' ? learningState : learningState;
+    const recent = type === 'math' ? s.recentMath : s.recentLang;
+    if (recent.length < 5) return;
+    const accuracy = recent.slice(-5).filter(Boolean).length / 5;
+    const streak = type === 'math' ? s.mathStreak : s.langStreak;
+    const lvl = type === 'math' ? 'mathLevel' : 'langLevel';
+    if (accuracy >= 0.8 && streak >= 3) s[lvl] = Math.min(s[lvl] + 1, 5);
+    else if (accuracy < 0.4) s[lvl] = Math.max(s[lvl] - 1, 1);
+}
+
+function generateMathChallenge() {
+    const lvl = learningState.mathLevel;
+    let question, answer, hint;
+    if (lvl <= 1) { // Counting / simple add
+        const a = 1 + Math.floor(Math.random() * 5), b = 1 + Math.floor(Math.random() * 5);
+        question = `${a} + ${b}`; answer = a + b; hint = 'Count them up!';
+    } else if (lvl === 2) { // Add bigger
+        const a = 5 + Math.floor(Math.random() * 15), b = 3 + Math.floor(Math.random() * 10);
+        question = `${a} + ${b}`; answer = a + b; hint = 'Add together!';
+    } else if (lvl === 3) { // Subtraction
+        const a = 10 + Math.floor(Math.random() * 20), b = 1 + Math.floor(Math.random() * a);
+        question = `${a} - ${b}`; answer = a - b; hint = 'Take away!';
+    } else if (lvl === 4) { // Mix add/sub
+        const isAdd = Math.random() > 0.5;
+        const a = 5 + Math.floor(Math.random() * 25), b = 2 + Math.floor(Math.random() * (isAdd ? 15 : a));
+        question = isAdd ? `${a} + ${b}` : `${a} - ${b}`;
+        answer = isAdd ? a + b : a - b; hint = isAdd ? 'Add!' : 'Subtract!';
+    } else { // Multiply
+        const a = 2 + Math.floor(Math.random() * 8), b = 2 + Math.floor(Math.random() * 8);
+        question = `${a} x ${b}`; answer = a * b; hint = 'Multiply!';
+    }
+    // Generate unique wrong answers
+    let opts = [answer];
+    while (opts.length < 3) {
+        const w = answer + (Math.random() > 0.5 ? 1 : -1) * (1 + Math.floor(Math.random() * 5));
+        if (w >= 0 && !opts.includes(w)) opts.push(w);
+    }
+    opts.sort(() => Math.random() - 0.5);
+    return { type: 'math', question: `${question} = ?`, answer, options: opts, hint, selected: -1 };
+}
+
+function generateLangChallenge() {
+    const lvl = learningState.langLevel;
+    if (lvl <= 1) {
+        // Letter recognition - which letter comes next?
+        const start = Math.floor(Math.random() * 23); // A-W
+        const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        const seq = letters[start] + ', ' + letters[start+1] + ', ?';
+        const answer = letters[start+2];
+        let opts = [answer];
+        while (opts.length < 3) { const l = letters[Math.floor(Math.random()*26)]; if (!opts.includes(l)) opts.push(l); }
+        opts.sort(() => Math.random() - 0.5);
+        return { type: 'lang', question: `Next letter: ${seq}`, answer, options: opts, hint: 'ABC!', selected: -1 };
+    } else {
+        // Spelling - show word with missing letter(s)
+        const bank = WORD_BANKS[Math.min(lvl - 2, WORD_BANKS.length - 1)];
+        const word = bank[Math.floor(Math.random() * bank.length)];
+        const hideIdx = Math.floor(Math.random() * word.length);
+        const display = word.slice(0, hideIdx) + '_' + word.slice(hideIdx + 1);
+        const answer = word[hideIdx].toUpperCase();
+        let opts = [answer];
+        while (opts.length < 3) {
+            const l = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random()*26)];
+            if (!opts.includes(l)) opts.push(l);
+        }
+        opts.sort(() => Math.random() - 0.5);
+        return { type: 'lang', question: `Spell: ${display.toUpperCase()}`, answer, options: opts, hint: `It's a ${word.length}-letter word!`, word, selected: -1 };
+    }
+}
+
+function triggerLearningGate() {
+    // Alternate math and language
+    const doMath = Math.random() > 0.4 || learningState.langLevel === 0;
+    learningGate = doMath ? generateMathChallenge() : generateLangChallenge();
+    learningGateTimer = 0;
+}
+
+function answerLearningGate(optionIdx) {
+    if (!learningGate || learningGate.selected >= 0) return;
+    learningGate.selected = optionIdx;
+    const correct = learningGate.options[optionIdx] == learningGate.answer;
+    const isMath = learningGate.type === 'math';
+
+    if (isMath) {
+        learningState.mathTotal++;
+        learningState.recentMath.push(correct);
+        if (learningState.recentMath.length > 10) learningState.recentMath.shift();
+        if (correct) { learningState.mathCorrect++; learningState.mathStreak++; }
+        else learningState.mathStreak = 0;
+    } else {
+        learningState.langTotal++;
+        learningState.recentLang.push(correct);
+        if (learningState.recentLang.length > 10) learningState.recentLang.shift();
+        if (correct) { learningState.langCorrect++; learningState.langStreak++; }
+        else learningState.langStreak = 0;
+    }
+
+    if (correct) {
+        score += 30; energy = Math.min(maxEnergy, energy + 8);
+        spawnParticles(W()/2, H()/2, '#60ff60', 15, 5);
+        spawnTextParticle(W()/2, H()/2 - 60, 'Correct! +30', '#60ff60');
+        playCollectSound('evolve');
+        learningReward = true; // unlock minigame reward
+    } else {
+        spawnParticles(W()/2, H()/2, '#ff8080', 8, 4);
+        const rightAns = learningGate.answer;
+        spawnTextParticle(W()/2, H()/2 - 60, `The answer was ${rightAns}`, '#ff8080');
+        learningReward = true; // still let them play, but no bonus
+    }
+
+    adaptDifficulty(isMath ? 'math' : 'lang');
+    // Save learning state
+    const sv = loadSave(); cachedSave = null;
+    sv.learningState = learningState;
+    sv.mathSolved = learningState.mathCorrect;
+    localStorage.setItem('cloudBunny3', JSON.stringify(sv));
+    checkAchievements();
+
+    // Close gate after 1.5 seconds
+    setTimeout(() => { learningGate = null; }, 1500);
+}
+
+function drawLearningGate() {
+    if (!learningGate) return;
+    const g = learningGate;
+    const answered = g.selected >= 0;
+    const correct = answered && g.options[g.selected] == g.answer;
+
+    // Dim background
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, W(), H());
+
+    // Card
+    const cw = Math.min(420, W() * 0.85), ch = 200, cx = W()/2 - cw/2, cy = H()/2 - ch/2;
+    ctx.fillStyle = 'rgba(20,10,40,0.92)';
+    ctx.beginPath(); ctx.roundRect(cx, cy, cw, ch, 16); ctx.fill();
+    ctx.strokeStyle = g.type === 'math' ? '#60a0ff' : '#ff80c0'; ctx.lineWidth = 3; ctx.stroke();
+
+    // Icon + type
+    ctx.font = 'bold 16px "Segoe UI"'; ctx.textAlign = 'center';
+    ctx.fillStyle = g.type === 'math' ? '#80c0ff' : '#ffa0d0';
+    ctx.fillText(g.type === 'math' ? '🧮 Math Challenge' : '📖 Word Challenge', W()/2, cy + 30);
+
+    // Question
+    ctx.font = 'bold 28px "Segoe UI"'; ctx.fillStyle = '#fff';
+    ctx.fillText(g.question, W()/2, cy + 75);
+
+    // Hint
+    ctx.font = '13px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fillText(g.hint, W()/2, cy + 98);
+
+    // Difficulty indicator
+    const lvl = g.type === 'math' ? learningState.mathLevel : learningState.langLevel;
+    ctx.font = '11px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText('Level ' + '★'.repeat(lvl) + '☆'.repeat(5 - lvl), W()/2, cy + ch - 15);
+
+    // Options (3 big buttons)
+    const btnW = Math.min(100, cw / 4), btnH = 50, btnY = cy + 115;
+    for (let i = 0; i < 3; i++) {
+        const bx = W()/2 + (i - 1) * (btnW + 15) - btnW/2;
+        let bgColor;
+        if (!answered) bgColor = 'rgba(255,255,255,0.15)';
+        else if (g.options[i] == g.answer) bgColor = 'rgba(60,200,60,0.5)';
+        else if (i === g.selected) bgColor = 'rgba(200,60,60,0.5)';
+        else bgColor = 'rgba(255,255,255,0.05)';
+
+        ctx.fillStyle = bgColor;
+        ctx.beginPath(); ctx.roundRect(bx, btnY, btnW, btnH, 10); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.5; ctx.stroke();
+
+        ctx.font = 'bold 22px "Segoe UI"'; ctx.fillStyle = '#fff';
+        ctx.fillText(g.options[i], bx + btnW/2, btnY + 33);
+
+        // Key hint
+        ctx.font = '11px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.fillText(`Press ${i + 1}`, bx + btnW/2, btnY + btnH + 14);
+    }
+
+    // Result feedback
+    if (answered) {
+        ctx.font = 'bold 24px "Segoe UI"';
+        ctx.fillStyle = correct ? '#60ff60' : '#ff8080';
+        ctx.fillText(correct ? 'Great job!' : 'Not quite!', W()/2, cy - 15);
+    }
+
+    ctx.textAlign = 'left';
+}
+
+// ========== WORMHOLE - side-scrolling rollercoaster ==========
+function startWormhole() {
+    wormholeMode = true; whTimer = 0; whPhase = 'coaster'; whScore = 0; whShake = 0;
+    // Generate rollercoaster track - smooth hills and loops
+    rc = { x: 0, y: H() * 0.5, trackPos: 0, speed: 3, track: [], stars: [], score: 0 };
+    for (let i = 0; i < 300; i++) {
+        const hillHeight = Math.sin(i * 0.03) * 150 + Math.sin(i * 0.08) * 80 + Math.cos(i * 0.05) * 60;
+        const isLoop = (i > 60 && i < 80) || (i > 160 && i < 180); // loop sections
+        rc.track.push({
+            x: i * 12,
+            y: H() * 0.5 + hillHeight + (isLoop ? Math.sin((i % 20) / 20 * Math.PI * 2) * 120 : 0),
+            isLoop,
+        });
+    }
+    // Scatter collectible stars along the track
+    for (let i = 0; i < 60; i++) {
+        const ti = 10 + Math.floor(Math.random() * 280);
+        const tp = rc.track[ti];
+        rc.stars.push({ x: tp.x + (Math.random()-0.5)*40, y: tp.y - 40 - Math.random()*60, collected: false });
+    }
+    const sv = loadSave(); cachedSave = null;
+    sv.wormholesEntered = (sv.wormholesEntered || 0) + 1;
+    localStorage.setItem('cloudBunny3', JSON.stringify(sv));
+    checkAchievements();
+    switchMusic('rollercoaster');
+}
+
+function updateWormhole(dt) {
+    whTimer += dt;
+    if (whShake > 0) whShake -= dt * 2;
+
+    if (whPhase === 'coaster') {
+        rc.speed = 4 + whTimer * 0.2;
+        rc.trackPos += rc.speed * dt * 60;
+        // Find current track position
+        const idx = Math.floor(rc.trackPos / 12) % rc.track.length;
+        const tp = rc.track[Math.min(idx, rc.track.length - 1)];
+        rc.x = tp.x; rc.y += (tp.y - rc.y) * 0.12; // smooth follow
+
+        // Collect stars
+        for (const s of rc.stars) {
+            if (s.collected) continue;
+            const dx = (s.x - rc.trackPos) * 0.8, dy = s.y - rc.y;
+            if (Math.abs(dx) < 30 && Math.abs(dy) < 40) {
+                s.collected = true; whScore += 30; score += 30;
+                energy = Math.min(maxEnergy, energy + 3);
+                playCollectSound('star');
+            }
+        }
+        // After 12 seconds, trigger learning gate then minigame
+        if (whTimer > 12) {
+            whPhase = 'learning'; triggerLearningGate();
+        }
+    } else if (whPhase === 'learning') {
+        learningGateTimer += dt;
+        // Wait for answer + delay, then go to minigame
+        if (!learningGate && learningGateTimer > 0.5) {
+            whPhase = pickMinigame(); whTimer = 0;
+            if (whPhase === 'frogger') initFrogger();
+            else if (whPhase === 'penguin') initPenguin();
+            else if (whPhase === 'owl') initOwl();
+        }
+    } else if (whPhase === 'frogger') { updateFrogger(dt); }
+    else if (whPhase === 'penguin') { updatePenguin(dt); }
+    else if (whPhase === 'owl') { updateOwl(dt); }
+
+    if (energy <= 0) { energy = 0; endWormhole(); gameOver = true; saveGame(); }
+}
+
+function endWormhole() {
+    wormholeMode = false;
+    nextWormholeScore = score + 400 + currentLevel * 150;
+    spawnTextParticle(W()/2, H()/2, `Ride Complete! +${whScore}`, '#ffe080');
+    energy = Math.min(maxEnergy, energy + 25);
+    switchMusic('normal'); checkAchievements();
+}
+
 function pickMinigame() {
     // Pick based on most common friend type
     const counts = {};
@@ -720,112 +1007,155 @@ function updateOwl(dt) {
 
 // ========== MINIGAME DRAWING ==========
 function drawWormhole() {
+    if (whPhase === 'learning') { drawLearningGate(); drawMinigameEnergyBar(); return; }
     if (whPhase === 'frogger') { drawFrogger(); return; }
     if (whPhase === 'penguin') { drawPenguin(); return; }
     if (whPhase === 'owl') { drawOwl(); return; }
 
-    // Flying phase - smooth space flight
+    // Side-scrolling rollercoaster ride!
     const t = whTimer;
     ctx.save();
-    if (whShake > 0) ctx.translate((Math.random()-0.5)*whShake*12, (Math.random()-0.5)*whShake*12);
 
-    // Smooth dark space background
-    const sg = ctx.createLinearGradient(0,0,0,H());
-    sg.addColorStop(0, '#050515'); sg.addColorStop(0.5, '#0a0a25'); sg.addColorStop(1, '#080820');
-    ctx.fillStyle = sg; ctx.fillRect(0,0,W(),H());
+    // Sunset sky
+    const sg = ctx.createLinearGradient(0, 0, 0, H());
+    sg.addColorStop(0, '#2a1a4e'); sg.addColorStop(0.3, '#6a3070');
+    sg.addColorStop(0.6, '#e07888'); sg.addColorStop(1, '#ffb868');
+    ctx.fillStyle = sg; ctx.fillRect(0, 0, W(), H());
 
-    // Nebula (soft, no flashing)
-    for (let i = 0; i < 3; i++) {
-        const nx = W()*0.5 + Math.sin(t*0.1+i*2)*W()*0.3;
-        const ny = H()*0.4 + Math.cos(t*0.08+i*1.5)*H()*0.2;
-        ctx.globalAlpha = 0.08;
-        const ng = ctx.createRadialGradient(nx,ny,0,nx,ny,250);
-        ng.addColorStop(0, `hsl(${200+i*40},60%,40%)`); ng.addColorStop(1,'transparent');
-        ctx.fillStyle = ng; ctx.fillRect(0,0,W(),H());
+    // Background clouds
+    ctx.globalAlpha = 0.3;
+    for (let i = 0; i < 6; i++) {
+        const cx = ((i * 250 - rc.trackPos * 0.1 + 2000) % (W() + 300)) - 100;
+        const cy = H() * 0.15 + i * 30 + Math.sin(t + i) * 10;
+        ctx.fillStyle = '#e8c0d0';
+        ctx.beginPath(); ctx.ellipse(cx, cy, 60, 20, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx - 30, cy + 5, 35, 15, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx + 35, cy + 5, 40, 15, 0, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
 
-    // Stars streaming past smoothly
-    for (const s of whStars) {
-        let rz = (s.z - whPosition%5000+5000)%5000; if (rz < 10) rz += 5000;
-        const p = 400/rz;
-        const sx = W()/2 + (s.x - whTilt)*p;
-        const sy = H()/2 + (s.y - whTargetTilt)*p;
-        if (sx<-20||sx>W()+20||sy<-20||sy>H()+20) continue;
-        const streakLen = Math.min(whSpeed*p*8, 40);
-        const ang = Math.atan2(sy-H()/2, sx-W()/2);
-        ctx.globalAlpha = Math.min(0.8, 400/rz);
-        ctx.strokeStyle = `hsl(${s.hue},70%,75%)`; ctx.lineWidth = Math.max(0.5, s.size*p);
-        ctx.beginPath(); ctx.moveTo(sx,sy);
-        ctx.lineTo(sx-Math.cos(ang)*streakLen, sy-Math.sin(ang)*streakLen); ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-
-    // Tunnel rings (smooth, gentle colors)
-    for (let i = 30; i >= 0; i--) {
-        const z = i*130+(whPosition%130);
-        const p = 500/Math.max(z,1);
-        const cx = W()/2 + Math.sin((whPosition+z)*0.0008)*120*p - whTilt*p*0.8;
-        const cy = H()/2 + Math.cos((whPosition+z)*0.001)*80*p - whTargetTilt*p*0.8;
-        const radius = (200+Math.sin(t*1.5+i*0.15)*20)*p;
-        if (radius < 1 || radius > W()*2) continue;
-        const hue = (180+i*4+whPosition*0.02)%360;
-        ctx.strokeStyle = `hsla(${hue},50%,55%,${Math.min(0.5,p*3)})`;
-        ctx.lineWidth = Math.max(1,5*p);
-        ctx.beginPath(); ctx.ellipse(cx,cy,radius,radius*0.8,0,0,Math.PI*2); ctx.stroke();
-    }
-
-    // Golden rings
-    for (const r of whRings) {
-        if (r.collected) continue;
-        const rz = r.z-whPosition; if (rz<5||rz>3500) continue;
-        const p = 500/rz;
-        const rx = W()/2+(r.x-whTilt*0.7)*p, ry = H()/2+(r.y-whTargetTilt*0.7)*p, rs = r.size*p;
-        if (rs<2) continue;
-        ctx.strokeStyle = `rgba(255,220,60,${Math.min(0.9,p*5)})`; ctx.lineWidth = Math.max(2,4*p);
-        ctx.beginPath(); ctx.arc(rx,ry,rs,0,Math.PI*2); ctx.stroke();
-    }
-    // Obstacles
-    for (const o of whObstacles) {
-        if (o.hit) continue;
-        const oz = o.z-whPosition; if (oz<5||oz>3500) continue;
-        const p = 500/oz, ox = W()/2+(o.x-whTilt*0.7)*p, oy = H()/2+(o.y-whTargetTilt*0.7)*p, os = o.size*p;
-        if (os<3) continue;
-        ctx.save(); ctx.translate(ox,oy); ctx.rotate(o.rot);
-        ctx.fillStyle = `rgba(100,70,50,${Math.min(0.85,p*4)})`;
-        ctx.beginPath();
-        for (let v=0;v<7;v++) { const a=(v/7)*Math.PI*2, r=os*(0.7+Math.sin(v*3)*0.3); v===0?ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r):ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r); }
-        ctx.closePath(); ctx.fill(); ctx.restore();
-    }
-
-    // Bunny (3rd person, centered, responsive to controls)
+    // Draw track rails
+    const viewOffset = rc.trackPos;
     ctx.save();
-    const bx = W()/2, by = H()*0.6;
-    ctx.translate(bx, by); ctx.rotate(-whTilt*0.001);
-    ctx.fillStyle = '#ffe8f0';
-    ctx.beginPath(); ctx.ellipse(0,2,18,22,0,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#e8a0b8'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#fff0f5';
-    ctx.beginPath(); ctx.ellipse(0,-18,14,13,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
-    for (let s of [-1,1]) {
-        ctx.save(); ctx.translate(s*8,-30); ctx.rotate(s*0.3+Math.sin(t*6)*0.2*s);
-        ctx.fillStyle='#ffe8f0'; ctx.beginPath(); ctx.ellipse(0,-11,5,14,0,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle='#ffb0c8'; ctx.beginPath(); ctx.ellipse(0,-10,2.5,9,0,0,Math.PI*2); ctx.fill();
+    ctx.translate(-viewOffset % 12, 0);
+
+    // Track supports (vertical lines from track to ground)
+    ctx.strokeStyle = 'rgba(100,80,60,0.5)'; ctx.lineWidth = 3;
+    for (let i = 0; i < rc.track.length; i += 5) {
+        const tx = rc.track[i].x - viewOffset;
+        if (tx < -50 || tx > W() + 50) continue;
+        const ty = rc.track[i].y;
+        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx, H()); ctx.stroke();
+    }
+
+    // Track rail (thick colored line following the hills)
+    ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // Shadow rail
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 8;
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < rc.track.length; i++) {
+        const tx = rc.track[i].x - viewOffset;
+        if (tx < -50 || tx > W() + 50) { started = false; continue; }
+        if (!started) { ctx.moveTo(tx, rc.track[i].y + 4); started = true; }
+        else ctx.lineTo(tx, rc.track[i].y + 4);
+    }
+    ctx.stroke();
+    // Main rail
+    const railGrad = ctx.createLinearGradient(0, 0, W(), 0);
+    railGrad.addColorStop(0, '#8060a0'); railGrad.addColorStop(0.5, '#c080c0'); railGrad.addColorStop(1, '#8060a0');
+    ctx.strokeStyle = railGrad; ctx.lineWidth = 5;
+    ctx.beginPath(); started = false;
+    for (let i = 0; i < rc.track.length; i++) {
+        const tx = rc.track[i].x - viewOffset;
+        if (tx < -50 || tx > W() + 50) { started = false; continue; }
+        if (!started) { ctx.moveTo(tx, rc.track[i].y); started = true; }
+        else ctx.lineTo(tx, rc.track[i].y);
+    }
+    ctx.stroke();
+
+    // Collectible stars along the track
+    for (const s of rc.stars) {
+        if (s.collected) continue;
+        const sx = s.x - viewOffset;
+        if (sx < -30 || sx > W() + 30) continue;
+        // Spinning star
+        ctx.save(); ctx.translate(sx, s.y);
+        ctx.rotate(t * 3); const pulse = 1 + Math.sin(t * 5 + s.x) * 0.15;
+        ctx.scale(pulse, pulse);
+        ctx.fillStyle = '#ffe040';
+        ctx.beginPath();
+        for (let v = 0; v < 5; v++) {
+            const a = (v * 4 * Math.PI) / 5 - Math.PI / 2;
+            ctx.lineTo(Math.cos(a) * 10, Math.sin(a) * 10);
+            ctx.lineTo(Math.cos(a + Math.PI/5) * 4, Math.sin(a + Math.PI/5) * 4);
+        }
+        ctx.closePath(); ctx.fill();
         ctx.restore();
     }
-    ctx.strokeStyle='#ffe0ea'; ctx.lineWidth=5; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(-16,-4); ctx.lineTo(-32+Math.sin(t*4)*6,-18); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(16,-4); ctx.lineTo(32-Math.sin(t*4)*6,-18); ctx.stroke();
+
+    // Bunny in a cart on the track!
+    const cartIdx = Math.floor(rc.trackPos / 12) % rc.track.length;
+    const cartTp = rc.track[Math.min(cartIdx, rc.track.length - 1)];
+    const nextTp = rc.track[Math.min(cartIdx + 1, rc.track.length - 1)];
+    const cartAngle = Math.atan2(nextTp.y - cartTp.y, 12); // slope angle
+    const cartX = cartTp.x - viewOffset;
+    const cartY = rc.y;
+
+    ctx.save();
+    ctx.translate(cartX, cartY);
+    ctx.rotate(cartAngle * 0.5);
+
+    // Cart
+    ctx.fillStyle = '#c080ff';
+    ctx.beginPath(); ctx.roundRect(-18, -8, 36, 16, 5); ctx.fill();
+    ctx.strokeStyle = '#8040c0'; ctx.lineWidth = 2; ctx.stroke();
+    // Wheels
+    ctx.fillStyle = '#666';
+    ctx.beginPath(); ctx.arc(-12, 10, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(12, 10, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#444'; ctx.lineWidth = 1.5; ctx.stroke();
+
+    // Bunny sitting in the cart
+    ctx.fillStyle = '#ffe8f0';
+    ctx.beginPath(); ctx.ellipse(0, -16, 14, 16, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#e8a0b8'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#fff0f5';
+    ctx.beginPath(); ctx.ellipse(0, -28, 11, 10, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // Ears
+    for (let s of [-1, 1]) {
+        ctx.save(); ctx.translate(s * 6, -36);
+        ctx.rotate(s * 0.2 + Math.sin(t * 6) * 0.3 * s + cartAngle * 0.5 * s);
+        ctx.fillStyle = '#ffe8f0';
+        ctx.beginPath(); ctx.ellipse(0, -10, 4, 12, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#ffb0c8';
+        ctx.beginPath(); ctx.ellipse(0, -9, 2, 8, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    }
+    // Eyes
+    for (let s of [-1, 1]) {
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s * 5, -30, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#4a2040'; ctx.beginPath(); ctx.arc(s * 5, -30, 2.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s * 5 + 1, -31, 1, 0, Math.PI * 2); ctx.fill();
+    }
+    // Smile
+    ctx.strokeStyle = '#c07090'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, -26, 3, 0.1, Math.PI - 0.1); ctx.stroke();
+    // Arms up (excited!)
+    ctx.strokeStyle = '#ffe0ea'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-12, -18); ctx.lineTo(-20, -35 + Math.sin(t * 8) * 5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(12, -18); ctx.lineTo(20, -35 + Math.cos(t * 8) * 5); ctx.stroke();
+
+    ctx.restore();
     ctx.restore();
 
     // HUD
     ctx.font = 'bold 22px "Segoe UI"'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
     ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 4;
-    ctx.fillText('Wormhole - Arrows to fly!', W()/2, 35);
+    ctx.fillText('Rainbow Rollercoaster!', W()/2, 35);
     ctx.font = '15px "Segoe UI"'; ctx.fillStyle = '#ffe080';
-    ctx.fillText(`+${whScore} pts | ${Math.ceil(10-whTimer)}s to minigame`, W()/2, 58);
+    ctx.fillText(`+${whScore} pts | Stars: ${rc.stars.filter(s=>s.collected).length}/${rc.stars.length} | ${Math.ceil(Math.max(0, 12 - whTimer))}s`, W()/2, 58);
     ctx.shadowBlur = 0;
-    // Energy bar during wormhole
     drawMinigameEnergyBar();
     ctx.textAlign = 'left';
     ctx.restore();
@@ -1021,60 +1351,10 @@ function drawAchievementPopup() {
     ctx.textAlign = 'left'; ctx.globalAlpha = 1;
 }
 
-// ========== MATH PUZZLE COLLECTIBLES ==========
-function spawnMathPuzzle() {
-    const ops = ['+','-','×'];
-    const op = ops[Math.floor(Math.random()*ops.length)];
-    let a, b, answer;
-    if (op === '+') { a = 2+Math.floor(Math.random()*15); b = 2+Math.floor(Math.random()*15); answer = a+b; }
-    else if (op === '-') { a = 5+Math.floor(Math.random()*20); b = 1+Math.floor(Math.random()*a); answer = a-b; }
-    else { a = 2+Math.floor(Math.random()*10); b = 2+Math.floor(Math.random()*10); answer = a*b; }
-    let wrong1, wrong2;
-    do { wrong1 = answer + Math.floor(Math.random()*5)+1; } while (wrong1 === answer);
-    do { wrong2 = Math.max(0, answer - Math.floor(Math.random()*5)-1); } while (wrong2 === answer || wrong2 === wrong1);
-    const options = [answer, wrong1, wrong2].sort(()=>Math.random()-0.5);
-    mathPuzzle = {
-        x: W()+50, y: H()*0.2+Math.random()*H()*0.4, speed: 0.4,
-        question: `${a} ${op} ${b} = ?`, answer, options,
-        selectedIdx: -1, solved: false, failed: false,
-    };
-}
-function drawMathPuzzle() {
-    if (!mathPuzzle || mathPuzzle.solved || mathPuzzle.failed) return;
-    const m = mathPuzzle;
-    ctx.save(); ctx.translate(m.x, m.y);
-    // Bubble
-    ctx.fillStyle = 'rgba(0,0,0,0.75)';
-    ctx.beginPath(); ctx.roundRect(-70,-30,140,75,10); ctx.fill();
-    ctx.strokeStyle = '#80c0ff'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.font = 'bold 16px "Segoe UI"'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-    ctx.fillText(m.question, 0, -10);
-    // Options
-    for (let i = 0; i < 3; i++) {
-        const ox = (i-1)*42, oy = 20;
-        ctx.fillStyle = m.selectedIdx===i ? '#60ff60' : 'rgba(255,255,255,0.2)';
-        ctx.beginPath(); ctx.roundRect(ox-18,oy-10,36,22,5); ctx.fill();
-        ctx.fillStyle = '#fff'; ctx.font = '14px "Segoe UI"';
-        ctx.fillText(m.options[i], ox, oy+6);
-    }
-    ctx.textAlign = 'left'; ctx.restore();
-}
+// handleMathInput now routes to learning gate
 function handleMathInput(num) {
-    if (!mathPuzzle || mathPuzzle.solved || mathPuzzle.failed) return;
-    if (num >= 1 && num <= 3) {
-        mathPuzzle.selectedIdx = num-1;
-        if (mathPuzzle.options[num-1] === mathPuzzle.answer) {
-            mathPuzzle.solved = true; score += 25; energy = Math.min(maxEnergy, energy+10);
-            spawnParticles(mathPuzzle.x, mathPuzzle.y, '#60ff60', 12, 5);
-            spawnTextParticle(mathPuzzle.x, mathPuzzle.y-40, '+25 Correct!', '#60ff60');
-            playCollectSound('evolve');
-            const s=loadSave(); cachedSave=null; s.mathSolved=(s.mathSolved||0)+1;
-            localStorage.setItem('cloudBunny3',JSON.stringify(s)); checkAchievements();
-        } else {
-            mathPuzzle.failed = true;
-            spawnParticles(mathPuzzle.x, mathPuzzle.y, '#ff4040', 8, 4);
-            spawnTextParticle(mathPuzzle.x, mathPuzzle.y-40, `Nope! It was ${mathPuzzle.answer}`, '#ff8080');
-        }
+    if (learningGate && learningGate.selected < 0 && num >= 1 && num <= 3) {
+        answerLearningGate(num - 1);
     }
 }
 
@@ -2147,11 +2427,12 @@ function update(dt) {
     }
     if (fireflies.length<15 && Math.random()<0.005) fireflies.push(makeFirefly());
 
-    // Math puzzles
+    // Learning gates - trigger periodically during normal gameplay
     if (achievementPopupTimer > 0) achievementPopupTimer -= dt;
-    mathPuzzleTimer += dt;
-    if (mathPuzzleTimer > 15 && (!mathPuzzle || mathPuzzle.solved || mathPuzzle.failed)) { spawnMathPuzzle(); mathPuzzleTimer = 0; }
-    if (mathPuzzle && !mathPuzzle.solved && !mathPuzzle.failed) { mathPuzzle.x -= mathPuzzle.speed; if (mathPuzzle.x < -100) mathPuzzle = null; }
+    learningGateTimer += dt;
+    if (learningGateTimer > 45 && !learningGate && !wormholeMode && score > 100) {
+        triggerLearningGate(); learningGateTimer = 0;
+    }
 
     updateWeather(dt);
     updateParticles(dt);
@@ -2287,7 +2568,7 @@ function draw() {
     drawParticles();
     drawHUD();
     drawPowerHUD();
-    drawMathPuzzle();
+    drawLearningGate();
     drawAchievementPopup();
 
     // Power aura around bunny
