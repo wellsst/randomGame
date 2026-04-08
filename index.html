@@ -178,25 +178,69 @@ let owlGame = { x: 0, y: 0, vy: 0, trees: [], fireflies: [], score: 0, timer: 0,
 let groundHazards = [];
 
 // ========== ADAPTIVE LEARNING SYSTEM ==========
-// Tracks kid's skill level and adapts math + language challenges
 let learningState = {
-    mathLevel: 1,       // 1=counting, 2=add small, 3=add big, 4=subtract, 5=multiply
-    langLevel: 1,       // 1=letters, 2=3-letter words, 3=4-letter, 4=5-letter, 5=sentences
+    mathLevel: 1, langLevel: 1, animalLevel: 1, geoLevel: 1,
     mathCorrect: 0, mathTotal: 0, mathStreak: 0,
     langCorrect: 0, langTotal: 0, langStreak: 0,
-    recentMath: [],     // last 10 results (true/false) for adaptive window
-    recentLang: [],
+    animalCorrect: 0, animalTotal: 0, geoCorrect: 0, geoTotal: 0,
+    recentMath: [], recentLang: [], recentAnimal: [], recentGeo: [],
+    totalStreak: 0, // across all types
+    // Spaced repetition: questions the kid got wrong, replayed later
+    reviewQueue: [],  // [{question, answer, options, type, wrongCount, nextReview}]
+    totalAnswered: 0,
 };
-let learningGate = null;  // active challenge blocking progress
-let learningGateTimer = 0;
-let learningReward = false; // true = earned minigame access
+let learningGate = null, learningGateTimer = 0, learningReward = false;
+// Encouragement messages
+const ENCOURAGEMENTS = [
+    'Great job!','You\'re amazing!','Super smart!','Keep it up!',
+    'Brilliant!','You rock!','Awesome!','Fantastic!','Way to go!','Star student!',
+];
+const GENTLE_MISSES = [
+    'Almost!','Good try!','So close!','Nearly there!','Keep trying!','You\'ll get it!',
+    'Don\'t worry!','Nice effort!','Learning is fun!',
+];
 
-// Word banks by difficulty
 const WORD_BANKS = [
-    ['cat','dog','sun','hat','red','big','run','hop','fun','cup'],  // 3-letter
-    ['frog','star','jump','fish','tree','bird','moon','rain','cake','blue'], // 4-letter
-    ['cloud','bunny','happy','sunny','green','music','dance','dream','heart','smile'], // 5-letter
-    ['rabbit','flower','friend','forest','garden','island','orange','purple','yellow','wonder'], // 6-letter
+    ['cat','dog','sun','hat','red','big','run','hop','fun','cup'],
+    ['frog','star','jump','fish','tree','bird','moon','rain','cake','blue'],
+    ['cloud','bunny','happy','sunny','green','music','dance','dream','heart','smile'],
+    ['rabbit','flower','friend','forest','garden','island','orange','purple','yellow','wonder'],
+];
+
+// Animal facts - each has a question format and fun fact
+const ANIMAL_FACTS = [
+    { q: 'What sound does a cat make?', a: 'Meow', wrong: ['Woof','Quack'], fact: 'Cats purr when they\'re happy!', lvl: 1 },
+    { q: 'What sound does a dog make?', a: 'Woof', wrong: ['Meow','Moo'], fact: 'Dogs wag their tail when happy!', lvl: 1 },
+    { q: 'What do frogs eat?', a: 'Insects', wrong: ['Grass','Bread'], fact: 'Frogs catch bugs with their tongue!', lvl: 1 },
+    { q: 'Where do penguins live?', a: 'Antarctica', wrong: ['Desert','Jungle'], fact: 'Penguins can\'t fly but swim super fast!', lvl: 1 },
+    { q: 'What do owls do at night?', a: 'Hunt', wrong: ['Sleep','Swim'], fact: 'Owls can turn their head almost all the way around!', lvl: 1 },
+    { q: 'How many legs does a spider have?', a: '8', wrong: ['6','4'], fact: 'Spiders make silk webs to catch food!', lvl: 2 },
+    { q: 'What is a baby cat called?', a: 'Kitten', wrong: ['Puppy','Cub'], fact: 'Kittens are born with their eyes closed!', lvl: 2 },
+    { q: 'What is a baby dog called?', a: 'Puppy', wrong: ['Kitten','Foal'], fact: 'Puppies sleep 18-20 hours a day!', lvl: 2 },
+    { q: 'Which animal is the tallest?', a: 'Giraffe', wrong: ['Elephant','Horse'], fact: 'A giraffe\'s tongue is 50cm long!', lvl: 2 },
+    { q: 'Which animal has a trunk?', a: 'Elephant', wrong: ['Rhino','Hippo'], fact: 'Elephants never forget!', lvl: 2 },
+    { q: 'What do bees make?', a: 'Honey', wrong: ['Milk','Silk'], fact: 'Bees dance to tell friends where flowers are!', lvl: 3 },
+    { q: 'Which animal changes color?', a: 'Chameleon', wrong: ['Parrot','Frog'], fact: 'Chameleons change color to show their mood!', lvl: 3 },
+    { q: 'What is the fastest land animal?', a: 'Cheetah', wrong: ['Lion','Horse'], fact: 'Cheetahs can run as fast as a car!', lvl: 3 },
+    { q: 'Which ocean animal has 8 arms?', a: 'Octopus', wrong: ['Shark','Whale'], fact: 'An octopus has 3 hearts!', lvl: 4 },
+    { q: 'What animal sleeps upside down?', a: 'Bat', wrong: ['Sloth','Koala'], fact: 'Bats use sound echoes to see in the dark!', lvl: 4 },
+];
+
+// Geography facts
+const GEO_FACTS = [
+    { q: 'What is the biggest ocean?', a: 'Pacific', wrong: ['Atlantic','Indian'], fact: 'The Pacific is bigger than all land combined!', lvl: 1 },
+    { q: 'Which continent has kangaroos?', a: 'Australia', wrong: ['Africa','Asia'], fact: 'Australia is both a country and a continent!', lvl: 1 },
+    { q: 'What is the North Pole covered in?', a: 'Ice', wrong: ['Sand','Grass'], fact: 'The North Pole has 6 months of daylight!', lvl: 1 },
+    { q: 'Where do lions live in the wild?', a: 'Africa', wrong: ['Europe','Australia'], fact: 'Africa has the biggest desert - the Sahara!', lvl: 1 },
+    { q: 'What is the tallest mountain?', a: 'Everest', wrong: ['Kilimanjaro','Alps'], fact: 'Mount Everest grows 4mm taller each year!', lvl: 2 },
+    { q: 'Which river is the longest?', a: 'Nile', wrong: ['Amazon','Thames'], fact: 'The Nile flows through 11 countries!', lvl: 2 },
+    { q: 'What country has the Great Wall?', a: 'China', wrong: ['Japan','India'], fact: 'The Great Wall is over 20,000 km long!', lvl: 2 },
+    { q: 'Which country looks like a boot?', a: 'Italy', wrong: ['France','Spain'], fact: 'Italy invented pizza and pasta!', lvl: 2 },
+    { q: 'What is the biggest continent?', a: 'Asia', wrong: ['Africa','Europe'], fact: 'Over 4 billion people live in Asia!', lvl: 3 },
+    { q: 'Where are the pyramids?', a: 'Egypt', wrong: ['Mexico','Greece'], fact: 'The pyramids are over 4,500 years old!', lvl: 3 },
+    { q: 'What country has the most people?', a: 'India', wrong: ['China','USA'], fact: 'India has over 1.4 billion people!', lvl: 3 },
+    { q: 'Which pole has penguins?', a: 'South', wrong: ['North','East'], fact: 'The South Pole is colder than the North!', lvl: 4 },
+    { q: 'What is the smallest continent?', a: 'Australia', wrong: ['Europe','Antarctica'], fact: 'Australia has unique animals found nowhere else!', lvl: 4 },
 ];
 
 // Achievements
@@ -504,188 +548,246 @@ function drawPowerHUD() {
 
 // ========== ADAPTIVE LEARNING ENGINE ==========
 function adaptDifficulty(type) {
-    const s = type === 'math' ? learningState : learningState;
-    const recent = type === 'math' ? s.recentMath : s.recentLang;
-    if (recent.length < 5) return;
-    const accuracy = recent.slice(-5).filter(Boolean).length / 5;
-    const streak = type === 'math' ? s.mathStreak : s.langStreak;
-    const lvl = type === 'math' ? 'mathLevel' : 'langLevel';
-    if (accuracy >= 0.8 && streak >= 3) s[lvl] = Math.min(s[lvl] + 1, 5);
-    else if (accuracy < 0.4) s[lvl] = Math.max(s[lvl] - 1, 1);
+    const recentKey = 'recent' + type.charAt(0).toUpperCase() + type.slice(1);
+    const lvlKey = type + 'Level';
+    const recent = learningState[recentKey];
+    if (!recent || recent.length < 4) return;
+    const accuracy = recent.slice(-5).filter(Boolean).length / Math.min(recent.length, 5);
+    if (accuracy >= 0.8 && learningState.totalStreak >= 3) learningState[lvlKey] = Math.min((learningState[lvlKey] || 1) + 1, 5);
+    else if (accuracy < 0.35 && recent.length >= 5) learningState[lvlKey] = Math.max((learningState[lvlKey] || 1) - 1, 1);
+}
+
+function makeOpts(answer, wrongArr) {
+    const opts = [answer, ...wrongArr]; opts.sort(() => Math.random() - 0.5); return opts;
 }
 
 function generateMathChallenge() {
     const lvl = learningState.mathLevel;
     let question, answer, hint;
-    if (lvl <= 1) { // Counting / simple add
-        const a = 1 + Math.floor(Math.random() * 5), b = 1 + Math.floor(Math.random() * 5);
-        question = `${a} + ${b}`; answer = a + b; hint = 'Count them up!';
-    } else if (lvl === 2) { // Add bigger
-        const a = 5 + Math.floor(Math.random() * 15), b = 3 + Math.floor(Math.random() * 10);
-        question = `${a} + ${b}`; answer = a + b; hint = 'Add together!';
-    } else if (lvl === 3) { // Subtraction
-        const a = 10 + Math.floor(Math.random() * 20), b = 1 + Math.floor(Math.random() * a);
-        question = `${a} - ${b}`; answer = a - b; hint = 'Take away!';
-    } else if (lvl === 4) { // Mix add/sub
-        const isAdd = Math.random() > 0.5;
-        const a = 5 + Math.floor(Math.random() * 25), b = 2 + Math.floor(Math.random() * (isAdd ? 15 : a));
-        question = isAdd ? `${a} + ${b}` : `${a} - ${b}`;
-        answer = isAdd ? a + b : a - b; hint = isAdd ? 'Add!' : 'Subtract!';
-    } else { // Multiply
-        const a = 2 + Math.floor(Math.random() * 8), b = 2 + Math.floor(Math.random() * 8);
-        question = `${a} x ${b}`; answer = a * b; hint = 'Multiply!';
-    }
-    // Generate unique wrong answers
-    let opts = [answer];
-    while (opts.length < 3) {
-        const w = answer + (Math.random() > 0.5 ? 1 : -1) * (1 + Math.floor(Math.random() * 5));
-        if (w >= 0 && !opts.includes(w)) opts.push(w);
-    }
-    opts.sort(() => Math.random() - 0.5);
-    return { type: 'math', question: `${question} = ?`, answer, options: opts, hint, selected: -1 };
+    if (lvl <= 1) { const a=1+Math.floor(Math.random()*5),b=1+Math.floor(Math.random()*5); question=`${a} + ${b}`; answer=a+b; hint='Count them up!'; }
+    else if (lvl===2) { const a=5+Math.floor(Math.random()*15),b=3+Math.floor(Math.random()*10); question=`${a} + ${b}`; answer=a+b; hint='Add together!'; }
+    else if (lvl===3) { const a=10+Math.floor(Math.random()*20),b=1+Math.floor(Math.random()*a); question=`${a} - ${b}`; answer=a-b; hint='Take away!'; }
+    else if (lvl===4) { const isAdd=Math.random()>0.5,a=5+Math.floor(Math.random()*25),b=2+Math.floor(Math.random()*(isAdd?15:a)); question=isAdd?`${a} + ${b}`:`${a} - ${b}`; answer=isAdd?a+b:a-b; hint=isAdd?'Add!':'Subtract!'; }
+    else { const a=2+Math.floor(Math.random()*8),b=2+Math.floor(Math.random()*8); question=`${a} x ${b}`; answer=a*b; hint='Multiply!'; }
+    let opts=[answer];
+    while(opts.length<3){const w=answer+(Math.random()>0.5?1:-1)*(1+Math.floor(Math.random()*5));if(w>=0&&!opts.includes(w))opts.push(w);}
+    opts.sort(()=>Math.random()-0.5);
+    return { type:'math', question:`${question} = ?`, answer, options:opts, hint, selected:-1 };
 }
 
 function generateLangChallenge() {
     const lvl = learningState.langLevel;
     if (lvl <= 1) {
-        // Letter recognition - which letter comes next?
-        const start = Math.floor(Math.random() * 23); // A-W
-        const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-        const seq = letters[start] + ', ' + letters[start+1] + ', ?';
-        const answer = letters[start+2];
-        let opts = [answer];
-        while (opts.length < 3) { const l = letters[Math.floor(Math.random()*26)]; if (!opts.includes(l)) opts.push(l); }
-        opts.sort(() => Math.random() - 0.5);
-        return { type: 'lang', question: `Next letter: ${seq}`, answer, options: opts, hint: 'ABC!', selected: -1 };
-    } else {
-        // Spelling - show word with missing letter(s)
-        const bank = WORD_BANKS[Math.min(lvl - 2, WORD_BANKS.length - 1)];
-        const word = bank[Math.floor(Math.random() * bank.length)];
-        const hideIdx = Math.floor(Math.random() * word.length);
-        const display = word.slice(0, hideIdx) + '_' + word.slice(hideIdx + 1);
-        const answer = word[hideIdx].toUpperCase();
-        let opts = [answer];
-        while (opts.length < 3) {
-            const l = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random()*26)];
-            if (!opts.includes(l)) opts.push(l);
-        }
-        opts.sort(() => Math.random() - 0.5);
-        return { type: 'lang', question: `Spell: ${display.toUpperCase()}`, answer, options: opts, hint: `It's a ${word.length}-letter word!`, word, selected: -1 };
+        const start=Math.floor(Math.random()*23), L='ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        const answer=L[start+2]; let opts=[answer];
+        while(opts.length<3){const l=L[Math.floor(Math.random()*26)];if(!opts.includes(l))opts.push(l);}
+        return { type:'lang', question:`Next letter: ${L[start]}, ${L[start+1]}, ?`, answer, options:opts.sort(()=>Math.random()-0.5), hint:'Think ABC!', selected:-1 };
     }
+    const bank=WORD_BANKS[Math.min(lvl-2,WORD_BANKS.length-1)];
+    const word=bank[Math.floor(Math.random()*bank.length)];
+    const hideIdx=Math.floor(Math.random()*word.length);
+    const display=word.slice(0,hideIdx)+'_'+word.slice(hideIdx+1);
+    const answer=word[hideIdx].toUpperCase(); let opts=[answer];
+    while(opts.length<3){const l='ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random()*26)];if(!opts.includes(l))opts.push(l);}
+    return { type:'lang', question:`Spell: ${display.toUpperCase()}`, answer, options:opts.sort(()=>Math.random()-0.5), hint:`${word.length}-letter word!`, word, selected:-1 };
+}
+
+function generateAnimalChallenge() {
+    const lvl = learningState.animalLevel || 1;
+    const pool = ANIMAL_FACTS.filter(f => f.lvl <= lvl + 1);
+    const f = pool[Math.floor(Math.random() * pool.length)];
+    return { type:'animal', question:f.q, answer:f.a, options:makeOpts(f.a, f.wrong), hint:f.fact, fact:f.fact, selected:-1 };
+}
+
+function generateGeoChallenge() {
+    const lvl = learningState.geoLevel || 1;
+    const pool = GEO_FACTS.filter(f => f.lvl <= lvl + 1);
+    const f = pool[Math.floor(Math.random() * pool.length)];
+    return { type:'geo', question:f.q, answer:f.a, options:makeOpts(f.a, f.wrong), hint:f.fact, fact:f.fact, selected:-1 };
 }
 
 function triggerLearningGate() {
-    // Alternate math and language
-    const doMath = Math.random() > 0.4 || learningState.langLevel === 0;
-    learningGate = doMath ? generateMathChallenge() : generateLangChallenge();
+    // Check review queue first (spaced repetition of wrong answers)
+    const now = learningState.totalAnswered;
+    const reviewReady = learningState.reviewQueue.filter(r => r.nextReview <= now);
+    if (reviewReady.length > 0 && Math.random() < 0.4) {
+        // Replay a question they got wrong before
+        const review = reviewReady[Math.floor(Math.random() * reviewReady.length)];
+        learningGate = { ...review, selected: -1, isReview: true };
+        learningGateTimer = 0;
+        return;
+    }
+    // Pick a category - rotate through all 4, weighted by what they've done least
+    const counts = { math: learningState.mathTotal, lang: learningState.langTotal,
+                     animal: learningState.animalTotal, geo: learningState.geoTotal };
+    const minCount = Math.min(...Object.values(counts));
+    const candidates = Object.entries(counts).filter(([,v]) => v <= minCount + 3).map(([k]) => k);
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+
+    if (pick === 'math') learningGate = generateMathChallenge();
+    else if (pick === 'lang') learningGate = generateLangChallenge();
+    else if (pick === 'animal') learningGate = generateAnimalChallenge();
+    else learningGate = generateGeoChallenge();
     learningGateTimer = 0;
 }
 
 function answerLearningGate(optionIdx) {
     if (!learningGate || learningGate.selected >= 0) return;
-    learningGate.selected = optionIdx;
-    const correct = learningGate.options[optionIdx] == learningGate.answer;
-    const isMath = learningGate.type === 'math';
+    const g = learningGate;
+    g.selected = optionIdx;
+    const correct = String(g.options[optionIdx]) === String(g.answer);
+    const t = g.type;
+    learningState.totalAnswered++;
 
-    if (isMath) {
-        learningState.mathTotal++;
-        learningState.recentMath.push(correct);
-        if (learningState.recentMath.length > 10) learningState.recentMath.shift();
-        if (correct) { learningState.mathCorrect++; learningState.mathStreak++; }
-        else learningState.mathStreak = 0;
+    // Track per-type stats
+    const totalKey = t + 'Total', correctKey = t + 'Correct', recentKey = 'recent' + t.charAt(0).toUpperCase() + t.slice(1);
+    learningState[totalKey] = (learningState[totalKey] || 0) + 1;
+    if (!learningState[recentKey]) learningState[recentKey] = [];
+    learningState[recentKey].push(correct);
+    if (learningState[recentKey].length > 10) learningState[recentKey].shift();
+    if (correct) {
+        learningState[correctKey] = (learningState[correctKey] || 0) + 1;
+        learningState.totalStreak++;
     } else {
-        learningState.langTotal++;
-        learningState.recentLang.push(correct);
-        if (learningState.recentLang.length > 10) learningState.recentLang.shift();
-        if (correct) { learningState.langCorrect++; learningState.langStreak++; }
-        else learningState.langStreak = 0;
+        learningState.totalStreak = 0;
     }
 
     if (correct) {
-        score += 30; energy = Math.min(maxEnergy, energy + 8);
+        const bonus = 25 + Math.min(learningState.totalStreak, 5) * 5;
+        score += bonus; energy = Math.min(maxEnergy, energy + 8);
         spawnParticles(W()/2, H()/2, '#60ff60', 15, 5);
-        spawnTextParticle(W()/2, H()/2 - 60, 'Correct! +30', '#60ff60');
+        const enc = ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)];
+        spawnTextParticle(W()/2, H()/2 - 70, `${enc} +${bonus}`, '#60ff60');
+        if (g.fact) spawnTextParticle(W()/2, H()/2 + 40, g.fact, '#80c0ff');
         playCollectSound('evolve');
-        learningReward = true; // unlock minigame reward
+        learningReward = true;
+        // Remove from review queue if it was a review
+        if (g.isReview) {
+            const ri = learningState.reviewQueue.findIndex(r => r.question === g.question);
+            if (ri >= 0) {
+                learningState.reviewQueue[ri].wrongCount--;
+                if (learningState.reviewQueue[ri].wrongCount <= 0) learningState.reviewQueue.splice(ri, 1);
+                else learningState.reviewQueue[ri].nextReview = learningState.totalAnswered + 3; // space it out more
+            }
+        }
     } else {
-        spawnParticles(W()/2, H()/2, '#ff8080', 8, 4);
-        const rightAns = learningGate.answer;
-        spawnTextParticle(W()/2, H()/2 - 60, `The answer was ${rightAns}`, '#ff8080');
-        learningReward = true; // still let them play, but no bonus
+        const miss = GENTLE_MISSES[Math.floor(Math.random() * GENTLE_MISSES.length)];
+        spawnParticles(W()/2, H()/2, '#ffb080', 8, 4);
+        spawnTextParticle(W()/2, H()/2 - 70, `${miss} It was: ${g.answer}`, '#ffb080');
+        if (g.fact) spawnTextParticle(W()/2, H()/2 + 40, g.fact, '#80c0ff');
+        learningReward = true; // still let them play - never punish
+        // Add to review queue for spaced repetition (replay after 2-5 questions)
+        const existing = learningState.reviewQueue.find(r => r.question === g.question);
+        if (existing) {
+            existing.wrongCount = Math.min(existing.wrongCount + 1, 3);
+            existing.nextReview = learningState.totalAnswered + 2;
+        } else if (learningState.reviewQueue.length < 8) { // don't overwhelm
+            learningState.reviewQueue.push({
+                question: g.question, answer: g.answer, options: g.options,
+                type: g.type, hint: g.hint || '', fact: g.fact || '',
+                wrongCount: 1, nextReview: learningState.totalAnswered + 2,
+            });
+        }
     }
 
-    adaptDifficulty(isMath ? 'math' : 'lang');
-    // Save learning state
+    adaptDifficulty(t);
     const sv = loadSave(); cachedSave = null;
-    sv.learningState = learningState;
-    sv.mathSolved = learningState.mathCorrect;
+    sv.learningState = learningState; sv.mathSolved = learningState.mathCorrect;
     localStorage.setItem('cloudBunny3', JSON.stringify(sv));
     checkAchievements();
-
-    // Close gate after 1.5 seconds
-    setTimeout(() => { learningGate = null; }, 1500);
+    setTimeout(() => { learningGate = null; }, correct ? 1800 : 2500); // longer for wrong so they read the answer
 }
 
 function drawLearningGate() {
     if (!learningGate) return;
     const g = learningGate;
     const answered = g.selected >= 0;
-    const correct = answered && g.options[g.selected] == g.answer;
+    const correct = answered && String(g.options[g.selected]) === String(g.answer);
 
-    // Dim background
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, W(), H());
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W(), H());
 
-    // Card
-    const cw = Math.min(420, W() * 0.85), ch = 200, cx = W()/2 - cw/2, cy = H()/2 - ch/2;
-    ctx.fillStyle = 'rgba(20,10,40,0.92)';
-    ctx.beginPath(); ctx.roundRect(cx, cy, cw, ch, 16); ctx.fill();
-    ctx.strokeStyle = g.type === 'math' ? '#60a0ff' : '#ff80c0'; ctx.lineWidth = 3; ctx.stroke();
+    const cw = Math.min(460, W() * 0.88), ch = 240, cx = W()/2 - cw/2, cy = H()/2 - ch/2;
+    // Card with category-colored border
+    const catColors = { math:'#60a0ff', lang:'#ff80c0', animal:'#80d060', geo:'#ffa040' };
+    const catIcons = { math:'🧮 Math', lang:'📖 Words', animal:'🐾 Animals', geo:'🌍 Geography' };
+    const catColor = catColors[g.type] || '#80c0ff';
 
-    // Icon + type
-    ctx.font = 'bold 16px "Segoe UI"'; ctx.textAlign = 'center';
-    ctx.fillStyle = g.type === 'math' ? '#80c0ff' : '#ffa0d0';
-    ctx.fillText(g.type === 'math' ? '🧮 Math Challenge' : '📖 Word Challenge', W()/2, cy + 30);
+    ctx.fillStyle = 'rgba(15,8,35,0.93)';
+    ctx.beginPath(); ctx.roundRect(cx, cy, cw, ch, 18); ctx.fill();
+    ctx.strokeStyle = catColor; ctx.lineWidth = 3; ctx.stroke();
 
-    // Question
-    ctx.font = 'bold 28px "Segoe UI"'; ctx.fillStyle = '#fff';
-    ctx.fillText(g.question, W()/2, cy + 75);
+    ctx.textAlign = 'center';
+    // Category label
+    ctx.font = 'bold 15px "Segoe UI"'; ctx.fillStyle = catColor;
+    ctx.fillText(catIcons[g.type] || g.type, W()/2, cy + 28);
 
-    // Hint
-    ctx.font = '13px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText(g.hint, W()/2, cy + 98);
-
-    // Difficulty indicator
-    const lvl = g.type === 'math' ? learningState.mathLevel : learningState.langLevel;
-    ctx.font = '11px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.fillText('Level ' + '★'.repeat(lvl) + '☆'.repeat(5 - lvl), W()/2, cy + ch - 15);
-
-    // Options (3 big buttons)
-    const btnW = Math.min(100, cw / 4), btnH = 50, btnY = cy + 115;
-    for (let i = 0; i < 3; i++) {
-        const bx = W()/2 + (i - 1) * (btnW + 15) - btnW/2;
-        let bgColor;
-        if (!answered) bgColor = 'rgba(255,255,255,0.15)';
-        else if (g.options[i] == g.answer) bgColor = 'rgba(60,200,60,0.5)';
-        else if (i === g.selected) bgColor = 'rgba(200,60,60,0.5)';
-        else bgColor = 'rgba(255,255,255,0.05)';
-
-        ctx.fillStyle = bgColor;
-        ctx.beginPath(); ctx.roundRect(bx, btnY, btnW, btnH, 10); ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.5; ctx.stroke();
-
-        ctx.font = 'bold 22px "Segoe UI"'; ctx.fillStyle = '#fff';
-        ctx.fillText(g.options[i], bx + btnW/2, btnY + 33);
-
-        // Key hint
-        ctx.font = '11px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        ctx.fillText(`Press ${i + 1}`, bx + btnW/2, btnY + btnH + 14);
+    // Review badge
+    if (g.isReview) {
+        ctx.font = '11px "Segoe UI"'; ctx.fillStyle = '#ffc060';
+        ctx.fillText('Let\'s try this one again!', W()/2, cy + 44);
     }
 
-    // Result feedback
+    // Streak indicator
+    if (learningState.totalStreak >= 2) {
+        ctx.font = '12px "Segoe UI"'; ctx.fillStyle = '#ffe040';
+        ctx.fillText('🔥 ' + learningState.totalStreak + ' in a row!', W()/2, cy + ch + 20);
+    }
+
+    // Question
+    ctx.font = 'bold 26px "Segoe UI"'; ctx.fillStyle = '#fff';
+    const qY = g.isReview ? cy + 72 : cy + 68;
+    ctx.fillText(g.question, W()/2, qY);
+
+    // Hint (shows fact for animal/geo)
+    if (!answered) {
+        ctx.font = '12px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillText(g.type === 'animal' || g.type === 'geo' ? 'What do you think?' : (g.hint || ''), W()/2, qY + 22);
+    }
+
+    // Difficulty stars
+    const lvlKey = g.type + 'Level';
+    const lvl = learningState[lvlKey] || 1;
+    ctx.font = '10px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillText('★'.repeat(lvl) + '☆'.repeat(5 - lvl), W()/2, cy + ch - 12);
+
+    // Options
+    const btnW = Math.min(110, cw / 3.5), btnH = 48, btnY = qY + 35;
+    for (let i = 0; i < g.options.length; i++) {
+        const bx = W()/2 + (i - 1) * (btnW + 12) - btnW/2;
+        let bg;
+        if (!answered) bg = 'rgba(255,255,255,0.12)';
+        else if (String(g.options[i]) === String(g.answer)) bg = 'rgba(60,200,60,0.5)';
+        else if (i === g.selected) bg = 'rgba(220,80,80,0.4)';
+        else bg = 'rgba(255,255,255,0.04)';
+
+        ctx.fillStyle = bg;
+        ctx.beginPath(); ctx.roundRect(bx, btnY, btnW, btnH, 10); ctx.fill();
+        ctx.strokeStyle = !answered ? 'rgba(255,255,255,0.25)' : 'transparent';
+        ctx.lineWidth = 1.5; if (!answered) ctx.stroke();
+
+        ctx.font = 'bold 20px "Segoe UI"'; ctx.fillStyle = '#fff';
+        ctx.fillText(g.options[i], bx + btnW/2, btnY + 31);
+        ctx.font = '10px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillText(`[${i + 1}]`, bx + btnW/2, btnY + btnH + 13);
+    }
+
+    // Result feedback with encouragement
     if (answered) {
-        ctx.font = 'bold 24px "Segoe UI"';
-        ctx.fillStyle = correct ? '#60ff60' : '#ff8080';
-        ctx.fillText(correct ? 'Great job!' : 'Not quite!', W()/2, cy - 15);
+        ctx.font = 'bold 22px "Segoe UI"';
+        ctx.fillStyle = correct ? '#60ff60' : '#ffb080';
+        const msg = correct
+            ? ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)]
+            : GENTLE_MISSES[Math.floor(Math.random() * GENTLE_MISSES.length)];
+        ctx.fillText(msg, W()/2, cy - 10);
+        // Show the fun fact after answering
+        if (g.fact) {
+            ctx.font = '13px "Segoe UI"'; ctx.fillStyle = '#a0d8ff';
+            ctx.fillText(g.fact, W()/2, cy + ch - 30);
+        }
+        if (!correct) {
+            ctx.font = '14px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillText(`The answer is: ${g.answer}`, W()/2, btnY + btnH + 30);
+        }
     }
 
     ctx.textAlign = 'left';
