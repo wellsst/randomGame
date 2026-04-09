@@ -31,6 +31,20 @@
         }
         .startBtns button:hover { transform: scale(1.06); box-shadow: 0 12px 40px rgba(140,100,255,0.7); }
         .startBtns button.secondary { background: linear-gradient(135deg, #666, #888); box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        .age-btn {
+            width: 48px; height: 48px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25);
+            background: rgba(255,255,255,0.08); color: #fff; font-size: 18px; font-weight: bold;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .age-btn:hover { background: rgba(255,255,255,0.2); transform: scale(1.1); }
+        .age-btn.selected { background: linear-gradient(135deg, #c084fc, #818cf8); border-color: #fff; box-shadow: 0 0 20px rgba(140,100,255,0.5); }
+        #profileList { margin: 10px 0; }
+        .profile-card {
+            display: inline-block; margin: 4px 6px; padding: 8px 18px; border-radius: 20px;
+            background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.2);
+            color: #fff; font-size: 14px; cursor: pointer; transition: all 0.2s;
+        }
+        .profile-card:hover { background: rgba(255,255,255,0.2); transform: scale(1.05); }
         #musicToggle {
             position: absolute; top: 12px; right: 12px; z-index: 20;
             background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.2);
@@ -40,16 +54,43 @@
 </head>
 <body>
     <div id="startScreen">
-        <h1>Cloud Bunny</h1>
-        <div class="subtitle">~ Dreamland ~</div>
-        <div class="controls">
-            Arrows/WASD move &bull; Space/Click jump &bull; Double-jump &amp; glide!<br>
-            Collect friends &bull; Merge 3 to evolve &bull; Press M to merge
+        <!-- Step 1: Welcome / Sign in -->
+        <div id="welcomeStep">
+            <h1>Cloud Bunny</h1>
+            <div class="subtitle">~ Dreamland ~</div>
+            <div class="savedInfo" id="savedInfo"></div>
+            <div id="profileList"></div>
+            <div class="startBtns">
+                <button id="newProfileBtn">New Player</button>
+                <button id="continueBtn" class="secondary" style="display:none">Continue</button>
+            </div>
         </div>
-        <div class="savedInfo" id="savedInfo"></div>
-        <div class="startBtns">
-            <button id="startBtn">Play!</button>
-            <button id="continueBtn" class="secondary" style="display:none">Continue</button>
+        <!-- Step 2: Create profile -->
+        <div id="profileStep" style="display:none">
+            <h1 style="font-size:36px">Who's Playing?</h1>
+            <div class="subtitle">Tell us about yourself!</div>
+            <div style="margin:18px 0">
+                <input id="playerName" type="text" placeholder="Your name" maxlength="20"
+                    style="padding:12px 20px;font-size:20px;border-radius:30px;border:2px solid rgba(255,255,255,0.3);
+                    background:rgba(255,255,255,0.1);color:#fff;text-align:center;outline:none;width:240px">
+            </div>
+            <div style="color:rgba(255,255,255,0.6);font-size:15px;margin-bottom:10px">How old are you?</div>
+            <div id="ageButtons" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:20px">
+                <button class="age-btn" data-age="4">4</button>
+                <button class="age-btn" data-age="5">5</button>
+                <button class="age-btn" data-age="6">6</button>
+                <button class="age-btn" data-age="7">7</button>
+                <button class="age-btn" data-age="8">8</button>
+                <button class="age-btn" data-age="9">9</button>
+                <button class="age-btn" data-age="10">10</button>
+                <button class="age-btn" data-age="11">11</button>
+                <button class="age-btn" data-age="12">12+</button>
+            </div>
+            <div id="ageHint" style="color:#c8a0ff;font-size:13px;margin-bottom:16px;min-height:20px"></div>
+            <div class="startBtns">
+                <button id="startBtn" disabled style="opacity:0.5">Let's Go!</button>
+                <button id="backBtn" class="secondary">Back</button>
+            </div>
         </div>
     </div>
     <button id="musicToggle">Music: ON</button>
@@ -177,6 +218,31 @@ let penguinGame = { x: 0, y: 0, vx: 0, vy: 0, fish: [], icebergs: [], score: 0, 
 let owlGame = { x: 0, y: 0, vy: 0, trees: [], fireflies: [], score: 0, timer: 0, flap: 0 };
 let groundHazards = [];
 
+// ========== PLAYER PROFILE ==========
+let playerProfile = { name: '', age: 7, id: null };
+
+function getProfiles() {
+    try { return JSON.parse(localStorage.getItem('cloudBunnyProfiles') || '[]'); } catch { return []; }
+}
+function saveProfile() {
+    const profiles = getProfiles();
+    const idx = profiles.findIndex(p => p.id === playerProfile.id);
+    const data = { ...playerProfile, lastPlayed: Date.now() };
+    if (idx >= 0) profiles[idx] = data; else profiles.push(data);
+    localStorage.setItem('cloudBunnyProfiles', JSON.stringify(profiles));
+}
+function calibrateLearningForAge(age) {
+    // Set starting difficulty based on age
+    if (age <= 4)      { learningState.mathLevel=1; learningState.langLevel=1; learningState.animalLevel=1; learningState.geoLevel=1; }
+    else if (age <= 5)  { learningState.mathLevel=1; learningState.langLevel=2; learningState.animalLevel=1; learningState.geoLevel=1; }
+    else if (age <= 6)  { learningState.mathLevel=2; learningState.langLevel=2; learningState.animalLevel=2; learningState.geoLevel=1; }
+    else if (age <= 7)  { learningState.mathLevel=2; learningState.langLevel=3; learningState.animalLevel=2; learningState.geoLevel=2; }
+    else if (age <= 8)  { learningState.mathLevel=3; learningState.langLevel=3; learningState.animalLevel=3; learningState.geoLevel=2; }
+    else if (age <= 9)  { learningState.mathLevel=3; learningState.langLevel=4; learningState.animalLevel=3; learningState.geoLevel=3; }
+    else if (age <= 10) { learningState.mathLevel=4; learningState.langLevel=4; learningState.animalLevel=4; learningState.geoLevel=3; }
+    else                { learningState.mathLevel=5; learningState.langLevel=5; learningState.animalLevel=4; learningState.geoLevel=4; }
+}
+
 // ========== ADAPTIVE LEARNING SYSTEM ==========
 let learningState = {
     mathLevel: 1, langLevel: 1, animalLevel: 1, geoLevel: 1,
@@ -279,7 +345,12 @@ function saveGame() {
         lastFriends: friends.map(f => ({ tier: f.tier, typeIdx: f.typeIdx })),
         version: 3,
     };
+    data.learningState = learningState;
+    data.playerName = playerProfile.name;
+    data.playerAge = playerProfile.age;
     localStorage.setItem('cloudBunny3', JSON.stringify(data));
+    // Also save per-profile
+    if (playerProfile.id) localStorage.setItem('cloudBunny3_' + playerProfile.id, JSON.stringify(data));
     cachedSave = data;
 }
 
@@ -292,19 +363,38 @@ function getMaxTier() {
     return friends.reduce((max, f) => Math.max(max, f.tier), 0);
 }
 
-function showSavedInfo() {
-    const s = loadSave();
+function showWelcomeScreen() {
+    const profiles = getProfiles();
     const info = document.getElementById('savedInfo');
     const cont = document.getElementById('continueBtn');
-    if (s.highScore) {
-        info.textContent = `High Score: ${s.highScore} | Best Level: ${(LEVELS[s.bestLevel || 0] || LEVELS[0]).name}`;
-        if (s.lastScore > 0) {
-            cont.style.display = 'inline-block';
-            cont.textContent = `Continue (Lv ${(s.bestLevel || 0) + 1})`;
-        }
+    const list = document.getElementById('profileList');
+
+    // Clear old profile cards
+    while (list.firstChild) list.removeChild(list.firstChild);
+
+    if (profiles.length > 0) {
+        info.textContent = 'Welcome back! Pick your profile:';
+        profiles.sort((a,b) => (b.lastPlayed||0) - (a.lastPlayed||0)).slice(0, 5).forEach(p => {
+            const card = document.createElement('div');
+            card.className = 'profile-card';
+            card.textContent = `${p.name} (age ${p.age})`;
+            card.addEventListener('click', () => {
+                playerProfile = { ...p };
+                const saveKey = 'cloudBunny3_' + p.id;
+                const existing = localStorage.getItem(saveKey);
+                if (existing) localStorage.setItem('cloudBunny3', existing);
+                cachedSave = null;
+                cont.style.display = 'inline-block';
+                cont.textContent = `Continue as ${p.name}`;
+                info.textContent = `Selected: ${p.name}`;
+            });
+            list.appendChild(card);
+        });
+    } else {
+        info.textContent = '';
     }
 }
-showSavedInfo();
+showWelcomeScreen();
 
 // ========== BUNNY ==========
 const bunny = {
@@ -1969,9 +2059,10 @@ function drawHUD() {
     const lv = LEVELS[currentLevel];
     ctx.textAlign = 'left'; ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 4;
 
-    // Level name
+    // Player name + level
     ctx.font = 'bold 14px "Segoe UI"'; ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.fillText(`Level ${currentLevel+1}: ${lv.name}`, 18, 20);
+    const nameTag = playerProfile.name ? `${playerProfile.name} - ` : '';
+    ctx.fillText(`${nameTag}Level ${currentLevel+1}: ${lv.name}`, 18, 20);
 
     // Score
     ctx.font = 'bold 24px "Segoe UI"'; ctx.fillStyle = '#fff';
@@ -2757,14 +2848,82 @@ function playProceduralMusic(){
     Tone.Transport.bpm.value=128; Tone.Transport.start();
 }
 
-// ========== START ==========
+// ========== START / PROFILE FLOW ==========
+let selectedAge = 0;
+
+// Step 1: New Profile button -> show profile form
+document.getElementById('newProfileBtn').addEventListener('click', () => {
+    document.getElementById('welcomeStep').style.display = 'none';
+    document.getElementById('profileStep').style.display = 'flex';
+    document.getElementById('profileStep').style.flexDirection = 'column';
+    document.getElementById('profileStep').style.alignItems = 'center';
+    document.getElementById('playerName').focus();
+});
+document.getElementById('backBtn').addEventListener('click', () => {
+    document.getElementById('profileStep').style.display = 'none';
+    document.getElementById('welcomeStep').style.display = 'flex';
+    document.getElementById('welcomeStep').style.flexDirection = 'column';
+    document.getElementById('welcomeStep').style.alignItems = 'center';
+});
+
+// Age buttons
+document.querySelectorAll('.age-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.age-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedAge = parseInt(btn.dataset.age);
+        const hints = {
+            4: 'Counting, letters, and cute animals!',
+            5: 'Simple adding and 3-letter words!',
+            6: 'Adding numbers and spelling fun words!',
+            7: 'Math adventures and word building!',
+            8: 'Subtraction, longer words, and world geography!',
+            9: 'Mixed math, spelling, and animal science!',
+            10: 'Multiplication and 6-letter words!',
+            11: 'Advanced challenges across all subjects!',
+            12: 'Expert mode - the full challenge!',
+        };
+        document.getElementById('ageHint').textContent = hints[selectedAge] || '';
+        checkStartReady();
+    });
+});
+
+document.getElementById('playerName').addEventListener('input', checkStartReady);
+
+function checkStartReady() {
+    const name = document.getElementById('playerName').value.trim();
+    const ready = name.length >= 1 && selectedAge > 0;
+    const btn = document.getElementById('startBtn');
+    btn.disabled = !ready;
+    btn.style.opacity = ready ? '1' : '0.5';
+}
+
 async function startGame(continued) {
     document.getElementById('startScreen').style.display='none';
+
+    if (!continued) {
+        // Create new profile
+        playerProfile.name = document.getElementById('playerName').value.trim() || 'Player';
+        playerProfile.age = selectedAge || 7;
+        playerProfile.id = 'p_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+        calibrateLearningForAge(playerProfile.age);
+        saveProfile();
+    } else {
+        // Continuing existing profile - restore learning state from save
+        const s = loadSave();
+        if (s.learningState) Object.assign(learningState, s.learningState);
+    }
+
+    // Save key per profile
+    const profileSaveKey = 'cloudBunny3_' + playerProfile.id;
+    const origSave = saveGame;
+
     await Tone.start(); initAudio(); loadAchievements(); initGame(continued); gameRunning=true;
     loadAndPlayMidi(); requestAnimationFrame(gameLoop);
 }
-document.getElementById('startBtn').addEventListener('click',()=>startGame(false));
-document.getElementById('continueBtn').addEventListener('click',()=>startGame(true));
+
+document.getElementById('startBtn').addEventListener('click', () => startGame(false));
+document.getElementById('continueBtn').addEventListener('click', () => startGame(true));
 
 let lastTime=0;
 function gameLoop(ts){
